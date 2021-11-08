@@ -1,0 +1,7 @@
+numpy
+scikit-learn
+torch
+torchvision
+rasterio
+segmentation_models_pytorch
+opencv-python
