@@ -19,7 +19,7 @@ class ModelTrainer():
                  f_name, 
                  scheduler = None, 
                  class_imbal_weights = None, 
-                 weights_path = './multilabel/weights', 
+                 weights_path = './data/weights', 
                  save_results = None, 
                  print_cl_met = True, 
                  minimum_lr = 0.0): 
@@ -132,9 +132,11 @@ class ModelTrainer():
         img_batch = loaded[0]
         label_batch = loaded[1]
         area_batch = loaded[2]
-        img_batch, lbl_batch, area_batch = img_batch.to(self.device), \
-                                           label_batch.to(self.device), \
-                                           area_batch.to(self.device)
+        
+        img_batch = img_batch.to(self.device)
+        lbl_batch = label_batch.to(self.device)
+        area_batch = area_batch.to(self.device)
+        
         return img_batch, lbl_batch, area_batch
     
     def getLoss(self):
@@ -250,7 +252,6 @@ class ModelTrainer():
 
         # process batch through network
         self.out = self.model(self.img_batch.float())
-        #print('Max', torch.max(self.out))
         
         if len(self.out) > 1 and isinstance(self.out, list):
             self.pred_out = np.array(self.sig(self.out[0]).cpu() > 0.5, dtype=float)
@@ -270,12 +271,14 @@ class ModelTrainer():
         return epoch_loss
         
     def store_val_output(self):
-        # if we have multiple logit outputs
+        # if we have multiple logit outputs (e.g. PCM)
         if len(self.out) > 1 and isinstance(self.out, list):
             self.epoch_probabilites.append(self.out[0].cpu().numpy())
+            
         # if only 1 logit output
         else:
             self.epoch_probabilites.append(self.out.cpu().numpy())
+            
         self.epoch_labels_val.append(self.lbl_batch.cpu().numpy())
         self.epoch_preds_val.append(self.pred_out)
       
@@ -298,16 +301,14 @@ class ModelTrainer():
             self.current_epoch = int(i+1)
         
         return self.model
-                                            
+
     def store_metrics(self):
         metrics_ = EpochMetrics(self.epoch_labels_val, 
                                 self.epoch_preds_val, 
                                 self.epoch_probabilites,
                                 self.classes,
                                 self.print_class_metrics)()
-        self.appendMetrics(metrics_)
-        
-    def appendMetrics(self, metrics_):
+
         self.f1_tracker.append(metrics_[0])
         self.classwise_f1.append(metrics_[1])
         self.classwise_r.append(metrics_[2])

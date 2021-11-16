@@ -2,7 +2,7 @@ import torch.nn as nn
 
 from .resnet import Resnet
 from typing import Optional
-from wstm.models.utils import sem
+from wstm.models.utils import esem
 from segmentation_models_pytorch.encoders import get_encoder
 from segmentation_models_pytorch.deeplabv3.decoder import DeepLabV3Decoder, DeepLabV3PlusDecoder
 from segmentation_models_pytorch.base import SegmentationModel, SegmentationHead, ClassificationHead

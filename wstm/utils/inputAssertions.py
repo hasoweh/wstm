@@ -1,10 +1,16 @@
 import torch
+import numpy as np
 
 def assert_tensor(obj, name):
     if not isinstance(obj, torch.Tensor):
         m = "'%s' must be a tensor, got %s."
         raise TypeError(m % (name, type(obj).__name__))
 
+def assert_array(obj, name):
+    if not isinstance(obj, np.ndarray):
+        m = "'%s' must be a numpy array, got %s."
+        raise TypeError(m % (name, type(obj).__name__))
+        
 def assert_list(obj, name):
     if not isinstance(obj, list):
         m = "'%s' must be a list, got %s."

@@ -131,7 +131,7 @@ class SEM_DeepLab(nn.Module):
         
         self.backbone = backbone
         self.debug = debug
-        self.sem = sem
+        self.sem = esem
         self.cam_attention = nn.Conv2d(infeat, n_class, 1)
         self.n_classes = n_class
         

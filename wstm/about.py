@@ -25,7 +25,7 @@ __all__ = [
 
 __version__ = '1.0.0'
 
-__title__ = "TreeSat"
+__title__ = "wstm"
 __summary__ = "A Python package for multi-label tree species classification at the image or pixel level."
 __uri__ = "https://gitlab.de"
 

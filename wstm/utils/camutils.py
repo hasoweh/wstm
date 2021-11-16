@@ -6,41 +6,21 @@ import cv2 as cv
 import numpy as np
 import torch.nn as nn
 from pathlib import Path
+from rasterio.crs import CRS
 from .inputAssertions import *
 from .image_utils import upsample
 from ..models.utils import sem_seeds
-from torch.nn.functional import cosine_similarity
 from .file_utils import delete_files_from_dir
+from torch.nn.functional import cosine_similarity
 from torchvision.transforms.functional import to_pil_image
 from .image_utils import load_image, threshold_shadows, get_img_meta
 
-def find_values_same_across_lists(nested_list):
-    """Finds values which are contained in all nested lists.
-    """
-        
-    class_max = list(set.intersection(*map(set, nested_list)))
-    return class_max
-
-def compare_arrays(array_list):
-    """Generator which returns where each array is higher 
-    than all other arrays in a given list.
-    """
-    def find_indexes(target_array, other_array):
-        return np.where(target_array.flatten() > other_array.flatten())[0]
+# default coordinate reference system for the dataset
+crs = CRS.from_wkt('PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown_based_on_GRS80_ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101004,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",9],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]')
     
-    for i, arr in enumerate(array_list):
-        # get the list of array_list without the current one
-        subset_arrays = array_list.copy()
-        del subset_arrays[i]
-        subset_arrays = np.array(subset_arrays)
-
-        idxs = [find_indexes(arr, arr2) for arr2 in subset_arrays]
-        class_max = find_values_same_across_lists(idxs)
-        
-        yield class_max, i 
     
 def save(mask_batch, filenames, batch_xform, outd, crs, 
-         dtype = np.uint8, shape = (304, 304), clear = False):
+         dtype = np.uint8, shape = (304, 304)):
     '''Takes a batch of arrays and saves them to file.
     
     Parameters
@@ -62,14 +42,9 @@ def save(mask_batch, filenames, batch_xform, outd, crs,
         Desired datatype of the output file.
     shape : tuple
         Shape (height, width) of the segmentation masks.
-    clear : bool
-        Whether to delete all files existing in the output
-        directory (outd).
     '''
-    
-    # delete all files in the folder
-    if clear:
-        delete_files_from_dir(outd)
+    if not isinstance(mask_batch, np.ndarray):
+        mask_batch = np.array(mask_batch)
         
     n_masks_batch = mask_batch.shape[0]
     
@@ -84,8 +59,37 @@ def save(mask_batch, filenames, batch_xform, outd, crs,
         with rasterio.open(outpath, 'w', **meta) as dest:
             dest.write(np.expand_dims(out_arr, 0))     
                 
-class CamCreator():
-    """Generates pseudolabels from class activation maps.
+class PseudoCreator():
+    """Generates pseudolabels from class localization maps.
+    
+    Parameters
+    ----------
+    model : nn.Module
+        A trained model with weights loaded.
+    input_shape : tuple
+        Shape of the input images.
+    threshold_cam : float
+        Threshold value for the normalized CLM. Any pixels
+        above this threshold will be kept, those below will 
+        be set to zero.
+    threshold_pred : float
+        Threshold for the model predictions. Any classes above
+        this theshold will be kept for the pseudo-label, while
+        classes predited with probability lower will not.
+    use_enhanced : bool
+        Whether to use an enhanced version of CAMs. For example, 
+        using eSEM or PCM.
+    manual_sem : int
+        Number of K seed points to use for SEM enhancement of CAM.
+        Thus, if we set it to 0 we will not use SEM, whereas if we
+        set it to anything above zero we will apply SEM.
+        
+    Note
+    ----
+    'use_enhanced' and 'manual_sem' cannot both be true. This is 
+    because if we set 'use_enhanced' to be true then we already have 
+    an enhanced version of the CAM and applying SEM to this wouldn't
+    make sense.
     """
 
     def __init__(self, 
@@ -94,7 +98,7 @@ class CamCreator():
                  threshold_cam = 0.9,
                  threshold_pred = 0.9,
                  use_enhanced = True,
-                 manual_sem = False
+                 manual_sem = 0
                  ):
         
         self.model = model
@@ -111,104 +115,35 @@ class CamCreator():
             m = "'manual_sem' and 'use_enhanced' cannot both be True"
             raise AssertionError(m)
        
-    def upsample_cam(self, cam):
+    def upsample_cam(self, clm):
         # if cam already the size desired no upsample
-        if cam.shape[-1] == self.width:
-            return cam
+        if clm.shape[-1] == self.width:
+            return clm
         # if not then upsample
         else:
             out_shape = (self.height, self.width)
             
-            return np.array(upsample(cam.numpy(),
+            return np.array(upsample(clm,
                                      shape = out_shape, 
                                      interpolation = cv.INTER_CUBIC, 
                                      dtype = np.uint8))
-    
-    @property
-    def minus(self):
-        return self._minus
-    
-    @minus.setter
-    def minus(self, tuple_):
-        """Determines if we need to subtract 1 from the length
-        of a list. If we include shadow as a class then we remove
-        one index from the length of the list containing class 
-        specific pixel labels.
-        """
-        shadow_class = tuple_[0]
-        filename = tuple_[1]
-        
-        if shadow_class is not None and 'Cleared' not in filename:
-            self._minus = 1
-        else: self._minus = 0
-
-    def get_multiclass_output(self, output_mask, class_masks, idx):
-        
-        # create a copy of the class_masks list from which we can delete
-        compare_masks = class_masks.copy()
-
-        if self.minus:
-            # remove the shadow mask from the class mask comparisons
-            del compare_masks[-1]
-
-        # find all pixels where each class has the highest probability
-        for index_maxes, i in compare_arrays(compare_masks):
-            # assign the class index value to all pixels in index_maxes
-            output_mask[index_maxes] = idx[i]
-
-        # reshape the mask to the original image shape
-        output_mask = output_mask.reshape((self.height, self.width))
-        
-        return output_mask
-        
-    def aggregate_cams(self, shadow_class, filename, class_masks, idx):
-        """Takes individual class CAMs and overlays them to 
-        form one single mask. In areas where two CAMs overlap,
-        the class with the higher probability will be assigned
-        to the pixel.
-        """
-        
-        nodata = 255
-        
-        # start with nodata and fill in class IDs after
-        output_mask = np.full((self.height * self.width), nodata, dtype = np.uint8)
-        
-        # subtract one from the length of the class_masks to get
-        # correct number of non-shadow classes
-        self.minus = (shadow_class, filename)
-
-        # if we only have 1 CAM (aside from shadow) then we don't need to compare
-        if len(class_masks)-self.minus == 1:
-            output_mask = np.where(class_masks[0] >= self.thresh, 
-                                   idx[0], 
-                                   255).astype(np.uint8)
-            
-        # if multiple CAMs we compare to find highest class at each pixel
-        else:
-            output_mask = self.get_multiclass_output(output_mask, 
-                                                     class_masks, 
-                                                     idx)
-
-        # add the shadow class pixels (if necessary)
-        if self.minus:
-            output_mask = np.where(class_masks[-1] == shadow_class, 
-                                   shadow_class, 
-                                   output_mask)
-        return output_mask
         
     def process_batch(self, img_batch):
         """Runs inference on a batch of images.
         """
+        if self.model.train():
+            self.model.eval()
+            
         out = self.model(img_batch.float())
         
         logits = out[1]
         features = out[-1]
         
         if self.use_enhanced:
-            cams = out[2]
-        else: cams = out[0]
+            clms = out[2]
+        else: clms = out[0]
 
-        return logits, cams, features
+        return logits, clms, features
         
     def get_confident_predictions(self, current_logits):
         """Finds the class indexes for classes predicted above 
@@ -219,51 +154,65 @@ class CamCreator():
         
         return idx
     
-    def decide_shadow_mask(self, cam, shadow_class, current_file):
-        """Determines whether to create a pixel label mask for the
-        shadow class or not.
-        """
-        # we don't take shadow class from Cleared images because its
-        # possible the image will be completely field and no shadow
-        if shadow_class is not None and 'Cleared' not in current_file:
-            # makes a mask for a shadow class
-            cam, self.shadows = threshold_shadows(cam, 
-                                                  current_file,
-                                                  shadow_class = shadow_class)
-        else:
-            # just removes shadows but doesn't include as a class
-            cam, self.shadows = threshold_shadows(cam, current_file)
-        
-        return cam
-    
     def prepare_cam(self, 
-                    cam_, 
+                    clm_, 
+                    confident_idx,
                     current_features, 
                     remove_shadow, 
-                    shadow_class, 
-                    current_file
+                    current_file,
+                    current_idx
                    ):
-        """Gets a single CAM ready for being used as mask."""
+        """Gets a single CLM ready for being used as mask. Upsamples,
+        thresholds, and removes shadows.
+        
+        Parameters
+        ----------
+        clm_ : torch.tensor(shape = (width, height))
+            A class localization map. Width and height will depend on the 
+            amount of downsampling which was applied in the model.
+        confident_idx : list
+            List of the class indices which he model has predicted with a 
+            probability above the threshold set when creating the CamCreator
+            class object.
+        current_features : torch.tensor(shape = (N, width, height))
+            The final feature maps from the model used to generate the CLM.
+            Has the same width and height as the 'cam_', and N depends on the
+            number of filters in the final layer of the model.
+        remove_shadow : bool
+            Whether to remove shadow pixels from the CLM.
+        current_file : str
+            Full path and file name of the original image which the CLM corresponds
+            to.
+        current_idx : int
+            The class index corresponding to the current CLM.
+        """
         
         if self.manual_sem:
-            cam_ = sem_seeds(cam_, current_features, self.manual_sem)
-
-        cam_ = self.upsample_cam(cam_.detach().cpu())
-
+            clm_ = sem_seeds(clm_, current_features, self.manual_sem)
+        
+        clm_ = self.upsample_cam(clm_.detach().cpu().numpy())
+        
+        if current_idx not in confident_idx:
+            return np.zeros(clm_.shape)
+        
         # threshold pixels with high confidence
         if self.thresh is not None:
-            cam_ = np.where(cam_ >= self.thresh,
-                            cam_,
+            clm_ = np.where(clm_ >= self.thresh,
+                            clm_,
                             0).astype(np.float32)
 
         # threshold shadows
         if remove_shadow:
-            # determines whether to make a shadow mask or just remove
-            cam_ = self.decide_shadow_mask(cam_,
-                                           shadow_class, 
-                                           current_file)
+            clm_, _ = threshold_shadows(clm_, current_file)
             
-        return cam_
+        return clm_
+    
+    def empty_clm(self, clm):
+        """Creates an array full of 255 (no data value).
+        """
+        clm_ = np.full(clm.shape, 255, dtype = np.float32)
+        clm_ = self.upsample_cam(clm_)
+        return clm_
     
     def get_pseudolabel(self, 
                         current_logits,
@@ -272,8 +221,9 @@ class CamCreator():
                         current_file,
                         current_features,
                         remove_shadow = True,
-                        aggregate = True,
-                        shadow_class = None):
+                        aggregate = True):
+        """Runs all of the steps required to create a psuedolabel from a raw CLM
+        """
         try:
             current_cams = np.squeeze(current_cams)
         except:
@@ -283,36 +233,31 @@ class CamCreator():
         idx = self.get_confident_predictions(current_logits)
 
         if len(idx) == 0:
-            # if no preds then we return empty mask
-            cam_ = np.full(current_cams[0].shape, 255, dtype = np.float32)
-            cam_ = self.upsample_cam(cam_)
-            return cam_
-
-        self.shadows = None
+            return self.empty_clm(current_cams[0])
         
-        # if p == cleared then  leave shadows
+        # if p == cleared then leave shadows
         class_cams = [self.prepare_cam(current_cams[p],
+                                       idx,
                                        current_features, 
-                                       remove_shadow if p != 4 else False, 
-                                       shadow_class, 
-                                       current_file) 
-                      for p in idx]
+                                       remove_shadow if p != 4 else False,
+                                       current_file,
+                                       p) 
+                      for p in range(current_cams.shape[0])]
         
-        if self.shadows:
-            class_cams.append(shadows)
-
+        class_cams = np.array(class_cams)
+        
         # combine all class masks into one singular output mask
         if aggregate:
-            output_mask = self.aggregate_cams(shadow_class, 
-                                              current_file, 
-                                              class_cams, 
-                                              idx
-                                              )
+            output_mask = np.where(np.max(class_cams, axis = 0) == 0, 
+                                   255,
+                                   np.argmax(class_cams, axis = 0))
 
         else:
             # dictionary where the key gives the class index
             # and the value is the class mask
-            output_mask = {cl : m for cl, m in zip(idx, class_cams)}
+            output_mask = {cl : m for cl, m in zip([i for i in range(len(class_cams))], 
+                                                   class_cams)
+                          }
         
         return output_mask
     
@@ -320,9 +265,7 @@ class CamCreator():
                  img_batch, 
                  filename = None, 
                  remove_shadow = False,
-                 shadow_class = None,
-                 aggregate = True,
-                 n_class = 5):
+                 aggregate = True):
         """
         Runs the main processing steps to generate an SEM CAM (SCAM).
         
@@ -330,20 +273,20 @@ class CamCreator():
         ----------
         img_batch : torch.tensor(shape = (b, c, w, h))
             Batch of Tensors which have been pre-processed for prediction by 
-            the model.
+            the model. Parameter b = batch size, c = number image channels,
+            w = width, h = height.
         filename : optional, array-like
             Only needed if the remove_shadow parameter is not None so we can
             check if Cleared is in the filename (since it is better not to 
             take shadow pixels from these types of images).
         remove_shadow : bool
-            Whether to remove shadow areas from the SCAM areas.
-        take_confident : optional, float
-            If provided as a float, then only SCAM pixels with a confidence 
-            higher than the float value will be kept.
+            Whether to remove shadow areas from the CLM areas.
+        aggregate : bool
+            Whether to combine all CLMs into a single mask.
             
         """ 
         # process the img_batch through the model
-        logits, cams, features = self.process_batch(img_batch)
+        logits, clms, features = self.process_batch(img_batch)
         
         # check if we have a batch of size of 1
         # if so we need to unsqueeze, otherwise we loop on
@@ -352,56 +295,44 @@ class CamCreator():
             logits = logits.unsqueeze(0)
         
         batch_size = logits.shape[0]
-        cam_batch = [self.get_pseudolabel(logits[i],
-                                          cams[i],
+        clm_batch = [self.get_pseudolabel(logits[i],
+                                          clms[i],
                                           img_batch[i],
                                           filename[i],
                                           features[i],
                                           remove_shadow,
-                                          aggregate,
-                                          shadow_class) 
+                                          aggregate) 
                      for i in range(batch_size)]
         
-        return cam_batch
+        return clm_batch
             
     def save_cams(self,
-                  loader,
                   generator,
                   out_dir,
                   device,
-                  shadow_class = None,
                   remove_shadow = True,
                   verbose = True):
-        """Takes a generator and extracts CAMs from each image loaded.
+        """Takes a generator and extracts CLMs from each image loaded.
         """
         counter = 0
         
-        for loaded in get_loaded(generator):
+        for loaded in generator:
             
             img_batch = loaded[0]
             lbl_batch = loaded[1]
             area_btch = loaded[2]
             name_ = loaded[3]
+            xform = loaded[4]
             img_batch = img_batch.to(device)
 
             counter += img_batch.shape[0]
             print('Images processed:', counter)
             
-            # process batch through network
+            # get CLMs
             mask_batch = self.__call__(img_batch, 
                                        name_, 
-                                       remove_shadow = remove_shadow, 
-                                       shadow_class = shadow_class)
+                                       remove_shadow = remove_shadow)
 
-            for i, mask in enumerate(mask_batch):
-                with rasterio.open(name_[i]) as src:
-                    profile = src.meta
-                    profile['height'] = self.height
-                    profile['width'] = self.width
-                    profile['count'] = 1
-                    profile['driver'] = 'GTiff'
-
-                outfile = out_dir + '/%s.%s' % (Path(name_[i]).stem, 'tif')
-                with rasterio.open(outfile, 'w', **profile) as dst:
-                    dst.write(mask.astype(rasterio.uint8), 1) 
+            save(mask_batch, name_, xform, out_dir, crs, 
+                 dtype = np.uint8, shape = (self.height, self.width))
                     

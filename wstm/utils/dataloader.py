@@ -96,6 +96,7 @@ def load_image_and_label(img_path, labels, classes):
     # load image file
     with rasterio.open(img_path) as f:
         img = f.read()
+        meta = f.meta.copy()
 
     # Take the filename from the file path
     filen = Path(img_path).name
@@ -108,37 +109,9 @@ def load_image_and_label(img_path, labels, classes):
         
     one_hot = convert_one_hot(classes, label)
     
-    return img.astype(np.uint8), one_hot
+    return img.astype(np.uint8), one_hot, meta
 
-class AbstractDataset(Dataset):
-    def __init__(self, 
-                 classes,
-                 band_means,
-                 band_stds,
-                 phase,
-                 augmenter,
-                 return_name = False):
-        
-        # assert data types
-        assert_list(classes, 'classes')
-        assert_tuple(band_stds, 'band_stds')
-        assert_tuple(band_means, 'band_means')
-        
-        self.return_fn = return_name
-        self.phase = phase
-        self.classes = classes
-        self.augmenter = augmenter
-    
-        # init base transforms
-        self.transforms = [T.ToTensor(), T.Normalize(band_means, band_stds)]
-    
-    def __len__(self):
-        return len(self.rasterData)
-    
-    def __getitem__(self, idx):
-        pass
-
-class ForestDataset(AbstractDataset):
+class ForestDataset(Dataset):
     """Forest dataset class.
     """
     
@@ -191,19 +164,24 @@ class ForestDataset(AbstractDataset):
             String giving a keyword. Only images with this keyword will be
             loaded by the dataloader. Can also be used to target one specific
             image by giving the entire filename of the desired image.
-        augmenter : optional, TreeSat.utils.augmenter.Augmenter
+        augmenter : optional, wstm.utils.augmenter.Augmenter
             An Augmenter object which can be used to apply augmentations
             to images.
         """
-        super().__init__(classes,
-                         band_means,
-                         band_stds,
-                         phase,
-                         augmenter,
-                         return_name)
-        
+        # assert data types
+        assert_list(classes, 'classes')
+        assert_tuple(band_stds, 'band_stds')
+        assert_tuple(band_means, 'band_means')
         assert_str(img_folder, 'img_folder')
         assert_str(json_file, 'json_file')
+        
+        self.return_fn = return_name
+        self.phase = phase
+        self.classes = classes
+        self.augmenter = augmenter
+    
+        # init base transforms
+        self.transforms = [T.ToTensor(), T.Normalize(band_means, band_stds)]
 
         if per_image_area_weights is not None:
             assert_dict(per_image_area_weights, 'per_image_area_weights')
@@ -223,6 +201,9 @@ class ForestDataset(AbstractDataset):
                                                   )
         
 
+    def __len__(self):
+        return len(self.rasterData)
+        
     def __getitem__(self, idx):
         # ensure the idx is in a list
         if torch.is_tensor(idx):
@@ -230,9 +211,9 @@ class ForestDataset(AbstractDataset):
         
         # get full file path
         img_name = self.rasterData[idx]
-        image, label = load_image_and_label(img_name, 
-                                            self.labels[self.phase],
-                                            self.classes)
+        image, label, meta = load_image_and_label(img_name, 
+                                                  self.labels[self.phase],
+                                                  self.classes)
         
         transform = T.Compose(self.transforms)
         
@@ -242,7 +223,7 @@ class ForestDataset(AbstractDataset):
         
         # apply extra augmentations
         if self.augmenter is not None:
-            image = self.augmenter(image, None)
+            image = self.augmenter([image])[0]
         
         # determine outputs
         if self.weights is None:
@@ -252,13 +233,13 @@ class ForestDataset(AbstractDataset):
             weight = torch.tensor(self.weights[Path(img_name).name])
             
         if not self.return_fn:
-            return image, label, weight
+            return image, label, weight, np.array(meta["transform"])
         else:
-            return image, label, weight, img_name
+            return image, label, weight, img_name, np.array(meta["transform"])
         
 class CamDataset(Dataset):
-    """Loads weakly supervised pixel labels based on class activation 
-    maps (CAMs).
+    """Loads weakly supervised pixel labels based on class localization 
+    maps (CLMs).
     """
 
     def __init__(self, 
@@ -287,6 +268,7 @@ class CamDataset(Dataset):
                 patt = folder_msk + '/*.%s' % file_type
                 m = "No files found using  pattern: %s" % patt
                 raise AssertionError(m)
+                
             # make a dictionary of {img: mask}
             patt = os.path.join(folder_im, '%s')
             path_dict = {p: patt % Path(p).name for p in paths}
@@ -305,7 +287,7 @@ class CamDataset(Dataset):
                                                           target_class)
         
         # initialize the base transformations that should always be applied
-        self.img_preprocessing = [T.ToTensor(), 
+        self.img_preprocessing = [T.ToTensor(),
                                   T.Normalize(band_means, band_stds)]
         
     def __len__(self):
@@ -346,7 +328,7 @@ class CamDataset(Dataset):
         # get full file path
         mask_path = self.rasterData[idx]
         image, mask, meta, img_path = self.load_mask_img(mask_path)
-        
+
         # set up transformations
         pre_process = T.Compose(self.img_preprocessing)
         
@@ -356,7 +338,7 @@ class CamDataset(Dataset):
         
         # apply extra augmentations
         if self.augmenter is not None:
-            image, mask = self.augmenter(image, mask)
+            image, mask = self.augmenter([image, mask])
 
         return image, mask, img_path, np.array(meta['transform'])
     

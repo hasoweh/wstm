@@ -1,6 +1,7 @@
-"""Tests the performance of CAM based methods for image segmentation. Thus, we can test
+"""Tests the performance of CLM based methods for image segmentation. Thus, we can test
 CAM, PCM, SEM and eSEM with this script.
 """
+
 import json
 import torch
 import argparse
@@ -9,10 +10,9 @@ import torch.nn as nn
 from pydoc import locate
 from torchcam.cams import *
 from rasterio.crs import CRS
-from wstm.utils.camutils import CamCreator
+from wstm.utils.camutils import PseudoCreator
 from wstm.models import get_classification_model
 from wstm.utils.dataloader import get_dataloader
-from wstm.trainers.pixelwise_trainer import default
 from sklearn.metrics import (f1_score, jaccard_score, precision_score, 
                              recall_score, confusion_matrix)
 
@@ -65,12 +65,12 @@ def main(ap):
     all_truth = []
     
     # setup cam creator object
-    creator = CamCreator(model, 
-                         (n_bands, 304, 304),
-                         ap['cam_threshold'],
-                         ap['prediction_threshold'],
-                         use_enhanced = ap['enhanced'],
-                         manual_sem = ap['n_seed'])
+    creator = PseudoCreator(model, 
+                            (n_bands, 304, 304),
+                            ap['cam_threshold'],
+                            ap['prediction_threshold'],
+                            use_enhanced = ap['enhanced'],
+                            manual_sem = ap['n_seed'])
 
 
     for i, (img_batch, lbl_batch, files, _) in enumerate(validation_generator):
@@ -103,7 +103,7 @@ def main(ap):
     print(confusion_matrix(all_truth, all_preds, labels = cl))
     
 def add_arguments():
-    ap = argparse.ArgumentParser(prog='Test CAM', description='Tests CAM area predictions')
+    ap = argparse.ArgumentParser(prog='Test CLM', description='Tests CLM area predictions')
     ap.add_argument('-c', '--config', type=str, required = True,
             help='Give the path to the config file.')
     ap.add_argument('-w', '--weights_file',  type=str, required = True,

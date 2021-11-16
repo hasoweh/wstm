@@ -1,5 +1,4 @@
 from .pcm import DeepLabModel, PCMBackDeepLab
-from .correlation_cams import *
 from pydoc import locate
 from .sem_cams import *
 from .deeplab import *

@@ -1,3 +1,4 @@
+from .inputAssertions import *
 from rasterio import Affine
 import numpy as np
 import cv2 as cv
@@ -6,6 +7,7 @@ import rasterio
 def load_image(fname):
     """Loads an image from file
     """
+    assert_str(fname, "fname")
     with rasterio.open(fname) as src:
         img = src.read()
     return img
@@ -13,7 +15,6 @@ def load_image(fname):
 def get_img_meta(crs, shape, dtype, xform_matrix):
     """Creates image metadata for rasterio format.
     """
-    
     x = xform_matrix
     if crs is not None:
         xform = Affine(x[0], x[1], x[2], x[3], x[4], x[5])
@@ -38,6 +39,11 @@ def upsample_multiband(imgarr,
     """
     
     bands = shape[0]
+    if bands <= 1:
+        m = """First element of 'shape' should be more than 1 for multi-band,
+        found %d"""
+        raise AssertionError(m % bands)
+        
     img_out = [cv.resize(imgarr[i,:,:], 
                          (shape[1], shape[2]), 
                          interpolation=interpolation)
@@ -63,9 +69,8 @@ def upsample(imgarr,
         The desired data type of the output array.
     """
     
-    if not isinstance(imgarr, np.ndarray):
-        m = "'imgarr' is a %s, must be numpy array"
-        raise TypeError(m % type(img_arr).__name__)
+    assert_array(imgarr, "imgarr")
+    assert_tuple(shape, "shape")
         
     # if we have multiple bands
     if len(shape) == 3:
@@ -83,6 +88,11 @@ def upsample(imgarr,
     return img_out
 
 def threshold_shadows(mask_raster, fname, shadow_class=None):
+    
+    assert_str(fname, "fname")
+    assert_array(mask_raster, "mask_raster")
+    if shadow_class is not None:
+        assert_int(shadow_class)
     
     # load image from file
     img = load_image(fname)

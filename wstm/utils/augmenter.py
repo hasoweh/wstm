@@ -79,7 +79,7 @@ class Augmenter():
                 try:
                     arrays[i] = TF.rotate(array, angle)
                 except:
-                    arrays[i] = TF.rotate(array.unsqueeze(0), angle, fill=255)
+                    arrays[i] = TF.rotate(array.unsqueeze(0), angle, fill=255).squeeze()
         return arrays
     
     def __call__(self, arrays):

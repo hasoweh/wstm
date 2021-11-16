@@ -3,12 +3,9 @@ import torch
 import argparse
 from pydoc import locate
 from torchcam.cams import *
-from TreeSat.models.utils import sem
-from TreeSat.models.senet import SENet
-from TreeSat.utils.camutils import CamCreator
-from TreeSat.models.deeplab import DeepLabACoL
-from TreeSat.models import get_classification_model
-from TreeSat.utils.dataloader import get_dataloader
+from wstm.utils.camutils import PseudoCreator
+from wstm.models import get_classification_model
+from wstm.utils.dataloader import get_dataloader
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -59,18 +56,16 @@ def main(ap):
     model.to(device)
     model.train(False)
     
-    creator = CamCreator(model, 
-                         (n_bands, ap['up_size'], ap['up_size']),
-                         threshold_cam = ap['cam_thresh'],
-                         threshold_pred = ap['pred_threshold'],
-                         use_enhanced = ap['enhanced'],
-                         manual_sem = ap['n_seed'])
+    creator = PseudoCreator(model, 
+                            (n_bands, ap['up_size'], ap['up_size']),
+                            threshold_cam = ap['cam_thresh'],
+                            threshold_pred = ap['pred_threshold'],
+                            use_enhanced = ap['enhanced'],
+                            manual_sem = ap['n_seed'])
     
-    creator.save_cams(loader,
-                      generator, 
+    creator.save_cams(generator, 
                       ap['outdir'],
                       device,
-                      None, 
                       ap['r_shadow'], 
                       False)
                 
@@ -86,8 +81,6 @@ def add_arguments():
             help='Name of the desired device for training (e.g. cpu or cuda:1)')
     ap.add_argument('-o', '--outdir',  type=str, required = True,
             help='Directory where the CAM masks should be saved to.')
-    ap.add_argument('-i', '--shadow_c', type=int,
-            help='Integer value to represent the pixels of class "shadow". If left empty then shadow class will not be made.')
     ap.add_argument('-b', '--subset', type=str, required = True, 
             help='Data subset to process CAMs on (e.g. train, val, or test.')
     ap.add_argument('-r', '--cam_thresh', type=float, default = 0.9, 

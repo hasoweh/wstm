@@ -5,11 +5,8 @@ import torch
 import argparse
 import numpy as np
 import torch.nn as nn
-from rasterio.crs import CRS
-from wstm.utils.camutils import save
 from wstm.utils.dataloader import get_dataloader
 from segmentation_models_pytorch import DeepLabV3Plus
-from wstm.trainers.pixelwise_trainer import default
 from sklearn.metrics import (f1_score, 
                              jaccard_score, 
                              precision_score, 
@@ -23,9 +20,6 @@ def main(ap):
 
     # load model weights
     weights = ap['weights_file']
-
-    # determine the coordinate reference system
-    crs = default
 
     classes = config['classes']
 
