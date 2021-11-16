@@ -2,7 +2,7 @@
 
 Official implementation of Weakly Supervised Tree Mapping (WSTM). 
 
-The method uses image level labels to train a pixel-wise classification model using aerial images of tree crowns.
+The method uses image level labels to train a pixel-wise classification model using aerial images (RGB + NIR) of tree crowns.
 
 ## Installation
 
