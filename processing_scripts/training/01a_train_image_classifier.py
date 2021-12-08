@@ -23,12 +23,6 @@ def main(ap):
 
     # get class names
     classes = config['classes']
-    if config['aggregate']:
-        classes = list(np.unique([c.split(' ')[0] for c in classes]))
-    # remove last class if we want to ignore (only applies to deepglobe)
-    if 'ignore_class' in config:
-        if config['ignore_class'] == 255:
-            classes = classes[:len(classes)-1]
     
     # define augmentations
     augs = {'hflip': {'prob': 0.5},

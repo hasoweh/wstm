@@ -70,4 +70,4 @@ def create_sem_deeplab(classes, config, debug):
                                upsampling = 4,
                                p_dropout = config['prob_drop'])
     
-    return SEM_DeepLab(backbone, len(classes), debug = debug)
+    return SEM_DeepLab(backbone, len(classes), eval_ = debug)

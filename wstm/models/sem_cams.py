@@ -1,4 +1,4 @@
-"""Using built in SEM approach (cosine similarity between feature map pixels).
+"""Using built in eSEM approach (cosine similarity between feature map pixels).
 """
 
 import torch
@@ -11,7 +11,7 @@ from segmentation_models_pytorch.deeplabv3.decoder import ASPP, SeparableConv2d
 
 class DeepLabForward(SegmentationModel):
     """Determines the forward pass of Deeplab.
-    Edited for use in SEM.
+    Edited for use in SEM/eSEM.
     """
     
     def __init__(self):
@@ -115,23 +115,30 @@ class DeepLabBackbone(DeepLabForward):
         
 class SEM_DeepLab(nn.Module):
     
-    def __init__(self, backbone=DeepLabBackbone, n_class=5, infeat = 128, debug = False):
+    def __init__(self, backbone=DeepLabBackbone, n_class=5, infeat = 128, eval_ = False):
         """
         Parameters
         ----------
         backbone : nn.Module
             Any network which produces CAMs.
+        n_class : int
+            Number of classes to predict.
         infeat : int
             The number of feature maps as input to PCM.
             Should be the number of output feature maps
             from the final layer of the backbone network.
+        eval_ : bool
+            Whether we are in evaluation mode. If True, 
+            then the network will return CLMs, logits,
+            and the final feature maps as an output. 
+            If False, then the network will only return logits.
         
         """
         super().__init__()
         
         self.backbone = backbone
-        self.debug = debug
-        self.sem = esem
+        self.eval_ = eval_
+        self.esem = esem
         self.cam_attention = nn.Conv2d(infeat, n_class, 1)
         self.n_classes = n_class
         
@@ -144,14 +151,14 @@ class SEM_DeepLab(nn.Module):
         cam = self.cam_attention(f)
         
         # use sem on CAM only for inference
-        if not self.training:
-            cam_p = self.sem(cam, f, self.n_classes)
+        if self.eval_:
+            cam_p = self.esem(cam, f, self.n_classes)
         
         # get final logits from the cam
         logits = self.backbone.avgpool(cam)
         logits = logits.squeeze()
         
-        if self.debug or not self.training:
+        if self.eval_:
             # return orig cam, logits, and improved cam
             return norm_batch(cam), logits, cam_p, f
         else:

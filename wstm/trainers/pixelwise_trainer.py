@@ -1,4 +1,4 @@
-from sklearn.metrics import jaccard_score
+from sklearn.metrics import jaccard_score, f1_score
 from .basetrainer import ModelTrainer
 from ..utils.inputAssertions import *
 from rasterio.crs import CRS
@@ -26,6 +26,7 @@ class PixelwiseTrainer(ModelTrainer):
                  minimum_lr = 0,
                  crs = default
                 ):
+        
         super().__init__(num_epochs, 
                          ['placeholder'], 
                          model, 
@@ -56,14 +57,14 @@ class PixelwiseTrainer(ModelTrainer):
         self.mean_dice_tracker = []
        
     def save_weights(self):
-        if self.val_losses[-1] == np.min(np.array(self.val_losses)):
+        if self.f1_tracker[-1] == np.max(np.array(self.f1_tracker)):
             print('Saving weights')
             torch.save(self.model.state_dict(), 
                        self.w_path + '/%s.pt' % self.file_name)
             
     def getLoss(self):
         return self.criterion(self.out, 
-                              self.mask_batch.long()
+                              self.lbl_batch.long()
                               )
 
     def init_epoch(self, i):
@@ -73,46 +74,56 @@ class PixelwiseTrainer(ModelTrainer):
         print('*' * 50)
         print('*' * 50)
 
-        self.epoch_masks = []
-        self.epoch_preds = []
+        self.epoch_labels_val = []
+        self.epoch_preds_val = []
         self.epoch_probabilites = []
         
     def get_loaded(self, loaded):
         img_batch = loaded[0]
-        mask_batch = loaded[1]
-        img_batch, mask_batch = img_batch.to(self.device),mask_batch.to(self.device)
+        lbl_batch = loaded[1]
+        img_batch, lbl_batch = img_batch.to(self.device),lbl_batch.to(self.device)
         
         self.batch_files = loaded[2]
         self.batch_xform = loaded[3]
         
-        return img_batch, torch.squeeze(mask_batch)
+        return img_batch, torch.squeeze(lbl_batch)
     
     def store_metrics(self):
         
-        truth = self.mask_batch.detach().cpu().numpy().flatten()
-        pred = np.argmax(self.sm(self.out).detach().cpu().numpy(), axis = 1)
-        pred = pred.flatten().astype(np.uint8)
-        
-        # get the labels included in both truth & pred
+        #truth = self.lbl_batch.detach().cpu().numpy().flatten()
+        #pred = np.argmax(self.sm(self.out).detach().cpu().numpy(), axis = 1)
+        #pred = pred.flatten().astype(np.uint8)
+        #
+        ## get the labels included in both truth & pred
         lbls = []
-        lbls.append(list(np.unique(truth)))
-        lbls.append(list(np.unique(pred)))
-        # flatten and remove 255 lbl
-        lbls = np.unique([i for subl in lbls for i in subl if i != 255])
+        lbls.extend(list(np.unique(self.epoch_labels_val)))
+        lbls.extend(list(np.unique(self.epoch_preds_val)))
+        ## remove 255 lbl
+        lbls = np.unique([i for i in lbls if i != 255])
         
-        miou = jaccard_score(truth, 
-                             pred, 
+        print(len(self.epoch_labels_val))
+        
+        miou = jaccard_score(self.epoch_labels_val, 
+                             self.epoch_preds_val, 
                              labels = lbls, 
                              average='macro')
         print('mIOU across %d classes:' % len(lbls), miou)
+        
+        f1 = f1_score(self.epoch_labels_val, 
+                      self.epoch_preds_val, 
+                      labels = lbls, 
+                      average='macro')
+        print('F1 across %d classes:' % len(lbls), f1)
         self.miou_tracker.append(miou
+                                )
+        self.f1_tracker.append(f1
                                 )
 
     def train_step(self, loaded, epoch_loss):
         '''Performs a single batch step in a training epoch'''
         
         # get training data
-        self.img_batch, self.mask_batch = self.get_loaded(loaded)
+        self.img_batch, self.lbl_batch = self.get_loaded(loaded)
 
         # reset gradients
         self.optimizer.zero_grad()
@@ -140,7 +151,7 @@ class PixelwiseTrainer(ModelTrainer):
         return epoch_loss
     
     def valStep(self, loaded, epoch_loss):
-        self.img_batch, self.mask_batch = self.get_loaded(loaded)
+        self.img_batch, self.lbl_batch = self.get_loaded(loaded)
 
         # process batch through network
         self.out = self.model(self.img_batch.float())
@@ -150,12 +161,34 @@ class PixelwiseTrainer(ModelTrainer):
         # calculate loss
         loss_val = self.getLoss()
 
+        # store in array so we can run metrics 
+        self.store_val_output()
+        
         # track loss
         epoch_loss.append(loss_val.item())
         self.val_loss_per_batch.append(loss_val.item())
         
         return epoch_loss
-      
+    
+    def store_val_output(self):
+        def filter_nodata(arr, nodata = 255):
+            idx = np.where(arr == nodata)
+            mask = np.ones_like(arr, dtype=bool)
+            mask[idx] = False
+            
+            return mask
+        
+        self.epoch_probabilites.extend(self.out.cpu().numpy())
+        
+        # mask out the values that are 255 from both lbls and val
+        mask = filter_nodata(self.lbl_batch.cpu().numpy().flatten())
+        
+        lbl = self.lbl_batch.cpu().numpy().flatten()[mask]
+        vals = self.pred_out.flatten()[mask]
+        
+        self.epoch_labels_val.extend(lbl.tolist())
+        self.epoch_preds_val.extend(vals.tolist())
+    
     def run(self):
         for i in range(self.epochs):
             self.init_epoch(i)
@@ -168,8 +201,8 @@ class PixelwiseTrainer(ModelTrainer):
                 if self.phase == 'testing':
                     self.store_metrics()
                     if self.sched_name == 'ReduceLROnPlateau':
-                        self.scheduler.step(self.val_losses[-1])
-            # if highest F1 score so far then we save the weights
+                        self.scheduler.step(self.f1_tracker[-1])
+            # if lowest val loss so far then we save the weights
             self.save_weights()
             
             self.current_epoch = int(i+1)

@@ -2,7 +2,6 @@ import json
 import torch
 import argparse
 from pydoc import locate
-from torchcam.cams import *
 from wstm.utils.camutils import PseudoCreator
 from wstm.models import get_classification_model
 from wstm.utils.dataloader import get_dataloader
@@ -21,9 +20,6 @@ def main(ap):
     
     # get class names
     classes = config['classes']
-    if 'ignore_class' in config:
-        if config['ignore_class'] == 255:
-            classes = classes[:len(classes)-1]
 
     # define GPU or CPU device
     device = torch.device(ap['device'])

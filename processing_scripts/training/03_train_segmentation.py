@@ -74,7 +74,7 @@ def main(ap):
     optimizer = torch.optim.AdamW(model.parameters(), lr=config['lr'], betas=(0.9, 0.999), eps=1e-08, 
                                   weight_decay=config['decay'], amsgrad=False)
     if config['scheduler']:
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', 
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', 
                                                                factor=config['lr_decay'], 
                                                                patience=1, threshold=0.001, 
                                                                threshold_mode='rel', cooldown=0, 

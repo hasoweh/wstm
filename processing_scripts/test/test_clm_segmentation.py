@@ -8,13 +8,13 @@ import argparse
 import numpy as np
 import torch.nn as nn
 from pydoc import locate
-from torchcam.cams import *
 from rasterio.crs import CRS
 from wstm.utils.camutils import PseudoCreator
 from wstm.models import get_classification_model
 from wstm.utils.dataloader import get_dataloader
 from sklearn.metrics import (f1_score, jaccard_score, precision_score, 
                              recall_score, confusion_matrix)
+
 
 def main(ap):
     
@@ -41,7 +41,7 @@ def main(ap):
     # define the base arguments used by all dataloaders
     base_args = {'band_means': tuple(config['means']),
                  'band_stds': tuple(config['stds']),
-                 'target_class' : targs
+                 'target_class' : None
                 }
     
     # get dataloaders
@@ -79,19 +79,11 @@ def main(ap):
 
         mask = creator(img_batch, 
                        filename = files, 
-                       remove_shadow = False,
-                       shadow_class = None,
-                       aggregate = True,
-                       n_class = len(classes))
-        all_preds.append(mask)
-        all_truth.append(lbl_batch)
-
-    all_preds = np.concatenate(all_preds)
-    all_preds = all_preds.flatten()
-    
-    all_truth = torch.cat(all_truth)
-    all_truth = all_truth.cpu().numpy().flatten()
-    
+                       remove_shadow = ap["shadow"],
+                       aggregate = True)
+        
+        all_preds.extend(np.array(mask).flatten())
+        all_truth.extend(lbl_batch.cpu().numpy().flatten())
     
     # calc metrics for the batches
     cl = [0,1,2,3,4]
@@ -100,7 +92,7 @@ def main(ap):
     print('Macro F1:', f1_score(all_truth, all_preds, average = 'macro', labels = cl))
     print('Macro mIoU:', jaccard_score(all_truth, all_preds, average = 'macro', labels = cl))
 
-    print(confusion_matrix(all_truth, all_preds, labels = cl))
+    #print(confusion_matrix(all_truth, all_preds, labels = cl))
     
 def add_arguments():
     ap = argparse.ArgumentParser(prog='Test CLM', description='Tests CLM area predictions')
@@ -124,12 +116,15 @@ def add_arguments():
             help='Number of seeds to use for the SEM function. If left as zero the SEM function will not be applied.')
     ap.add_argument('-t', '--split', default='test', type=str,
             help='Dataset split to use. Should be either train or test.')
+    ap.add_argument('-a', '--shadow', action='store_true',
+            help='Whether to remove shadows.')
     
     args = vars(ap.parse_args())
     return args
 
 
 if __name__ == '__main__':
-
+    
+    
     args = add_arguments()
     main(args)

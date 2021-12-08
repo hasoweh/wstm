@@ -7,8 +7,6 @@ class AreaAwareLoss():
     """Calculates binary cross entropy loss using the area covered by a class
     in each image as a weighting factor.
     """
-    #def __init__(self, device):
-    #    self.device = device
         
     def __call__(
         self,
@@ -46,7 +44,10 @@ class AreaAwareMulti():
     Used to train the PCM module and the classification
     head.
     """
-        
+    
+    def __init__(self, loss_term_weights = [.9, .1]):
+        self.loss_term_weights = loss_term_weights
+    
     def __call__(
         self,
         preds,
@@ -60,12 +61,12 @@ class AreaAwareMulti():
         n_losses = len(preds)
         # calc each loss
         loss = 0
-        for pred in preds:
-            loss += AreaAwareLoss()(pred, 
-                                    targets,
-                                    area_weights,
-                                    multi_class_weights = None,
-                                    reduction = 'mean')
+        for w, pred in zip(loss_term_weights, preds):
+            loss += w * AreaAwareLoss()(pred, 
+                                        targets,
+                                        area_weights,
+                                        multi_class_weights = None,
+                                        reduction = 'mean')
 
         # get mean of the losses
         L = loss / n_losses

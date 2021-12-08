@@ -1,5 +1,5 @@
-.ipynb_checkpoints
+*.ipynb_checkpoints
 install.ipynb
 __pycache__/
-.egg-info
-.ipynb
+*.egg-info
+*.ipynb
