@@ -2,3 +2,4 @@
 install.ipynb
 __pycache__/
 .egg-info
+.ipynb
