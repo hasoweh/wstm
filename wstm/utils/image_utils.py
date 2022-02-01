@@ -65,6 +65,7 @@ def upsample(imgarr,
         Desired dimensions of the upsampled image.
     interpolation : cv2.function
         A method determining the type of interpolation to use.
+        For mask upsampling inter_cubic is recommended.
     dtype : np.dtype
         The desired data type of the output array.
     """

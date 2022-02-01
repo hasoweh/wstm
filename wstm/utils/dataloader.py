@@ -63,27 +63,6 @@ def convert_one_hot(classes, labels):
         one_hot[idx] = 1
     return one_hot
 
-def convert_sec_style(classes, labels):
-    """Converts a list of class indexes to a one-hot
-    encoded vector.
-    
-    Examples:
-    ---------
-    >>> all_classes = ['grass', 'tree', 'road', 'cloud']
-    >>> image_labels = [1, 2]
-    >>> print(convert_one_hot(all_classes, image_labels))
-    [0, 1, 1, 0]
-    
-    """
-    # get the one hot encoding vector for the target labels
-    one_hot = np.zeros((1, 1, len(classes)))
-    for lab in labels:
-        # get index from original class list
-        idx = classes.index(lab)
-        one_hot[0,0, idx] = 1.
-
-    return one_hot
-
 def load_image_and_label(img_path, labels, classes):
     '''
     Parameters

@@ -3,7 +3,6 @@
 
 import torch
 import torch.nn as nn
-from .resnet import Resnet
 from .utils import norm_batch
 import torch.nn.functional as F
 from .sem_cams import DeeplabDecoder
@@ -30,9 +29,9 @@ class PCMDeeplab(nn.Module):
 
 
     def forward(self, aspp, f3, inp, cam):
+            
         # get dims of largest map
         n,c,h,w = cam.size()
-        
         # apply 1x1 conv to input features
         f3 = self.f8_3(f3)
         aspp = self.f8_aspp(aspp)
@@ -43,16 +42,13 @@ class PCMDeeplab(nn.Module):
         # upsample the f3 to the cam size
         f3 = F.interpolate(f3, (h,w), mode='bilinear', align_corners=True)
         # concatenate the different features
-        #print('xs', x_s.shape)
-        #print('aspp', aspp.shape)
-        #print('f3', f3.shape)
         f = torch.cat([x_s, aspp, f3], dim=1)
         # run through a 1x1 conv
         f = self.f9(f)
         
         # find the affinity matrix
         f = f.view(n,-1,h*w)
-        f = f/(torch.norm(f,dim=1,keepdim=True)+1e-5)
+        f = f/(torch.norm(f, dim=1, keepdim=True)+1e-5)
         aff = F.relu(torch.matmul(f.transpose(1,2), f),inplace=True)
         aff = aff/(torch.sum(aff,dim=1,keepdim=True)+1e-5)
         # apply affinity to the CAM
@@ -144,6 +140,28 @@ class DeepLabModel(nn.Module):
         self.debug = debug
         self.attention_head = PCMDeeplab(infeat, n_class)
         self.cam_attention = nn.Conv2d(infeat, n_class, 1)
+        self.eval_ = debug
+        self.maxpool = nn.AdaptiveMaxPool2d((1,1))
+        
+    def normalize(self, cam):
+        n, c, h, w = cam.size()
+        with torch.no_grad():
+            cam_d = F.relu(cam.detach())
+            cam_d_max = torch.max(cam_d.view(n,c,-1), dim=-1)[0].view(n,c,1,1)+1e-5
+            cam_d_norm = F.relu(cam_d-1e-5)/cam_d_max
+            
+        return cam_d_norm
+        
+    def norm_loop(self, cam):
+        out = torch.zeros_like(cam)
+        for b in range(cam.shape[0]):
+            for c in range(cam.shape[1]):
+                current = cam[b, c, :, :]
+                current = current/torch.max(current)
+                out[b, c, :, :] = current
+        
+        return out
+            
         
     def forward(self, x):
         
@@ -154,16 +172,12 @@ class DeepLabModel(nn.Module):
         cam = self.cam_attention(f)
         
         # use relu and normalize cam
-        n, c, h, w = cam.size()
-        cam_d = F.relu(cam.detach())
-        cam_d_max = torch.max(cam_d.view(n,c,-1), dim=-1)[0].view(n,c,1,1)+1e-5
-        cam_d_norm = F.relu(cam_d-1e-5)/cam_d_max
+        cam_d_norm = self.normalize(cam)
+        
         
         # use pcm on CAM
         cam_p = self.attention_head(aspp, encoder_feats[-3], x, cam_d_norm)
-        
-        # normalize the values
-        cam_p = norm_batch(cam_p)
+        #cam_p = self.attention_head(aspp, f, encoder_feats[0], cam_d_norm)
         
         # get final logits from the cam
         logits = self.backbone.avgpool(cam)
@@ -171,9 +185,10 @@ class DeepLabModel(nn.Module):
         
         # get logits from the PCM cam
         logits_pcm = self.backbone.avgpool(cam_p)
+        #print("logits_pcm", logits_pcm)
         logits_pcm = logits_pcm.squeeze()
         
-        if not self.training:
-            return cam, logits, cam_p, f
+        if self.eval_ and not self.training:
+            return [cam, logits, self.norm_loop(cam_p), f]
         else:
             return [logits, logits_pcm]

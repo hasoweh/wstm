@@ -1,14 +1,10 @@
 from .pcm import DeepLabModel, PCMBackDeepLab
 from pydoc import locate
 from .sem_cams import *
-from .deeplab import *
-from .resnet import *
 
 
 def get_classification_model(modelname, classes, config, debug = False):
-    model_dict = {'Resnet': create_resnet,
-                  'Sem_resnet': create_sem_resnet,
-                  'Pcm_deeplab': create_pcm_deeplab,
+    model_dict = {'Pcm_deeplab': create_pcm_deeplab,
                   'Sem_deeplab': create_sem_deeplab
                  }
     model_builder = model_dict[modelname]
@@ -24,29 +20,6 @@ def load_pytorch_model(config):
     if config['model'] is not None:
         model_base = locate(config['model'])(pretrained)
     return model_base
-
-
-def create_resnet(classes, config, debug):
-    
-    unfreeze = None if 'unfreeze' not in config else config['unfreeze']
-    
-    return Resnet(load_pytorch_model(config), 
-                  len(classes),
-                  n_bands = len(config['means']),
-                  p_dropout = config['prob_drop'],
-                  unfreeze = unfreeze)
-
-def create_sem_resnet(classes, config, debug):
-    unfreeze = None if 'unfreeze' not in config else config['unfreeze']
-    
-    # use resnet as backbone
-    backbone = Backbone(load_pytorch_model(config), 
-                        len(classes),
-                        n_bands = len(config['means']),
-                        p_dropout = config['prob_drop'],
-                        unfreeze = unfreeze)
-    
-    return SEM_Resnet(backbone, len(classes))
 
 def create_pcm_deeplab(classes, config, debug):
     # use Deeplabv3+ as main architecture

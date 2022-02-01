@@ -21,7 +21,7 @@ class DeepLabForward(SegmentationModel):
         """Sequentially pass `x` through model`s encoder, decoder and heads"""
         x = self.encoder(x) # produces list of features
         x = self.decoder(*x) # pass list of features to decoder
-        #print('shape', x.shape)
+
         return x
 
 class DeeplabDecoder(nn.Module):
@@ -161,6 +161,7 @@ class SEM_DeepLab(nn.Module):
         if self.eval_:
             # return orig cam, logits, and improved cam
             return norm_batch(cam), logits, cam_p, f
+
         else:
             # return preds
             return logits

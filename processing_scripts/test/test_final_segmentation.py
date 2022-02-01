@@ -55,7 +55,6 @@ def main(ap):
     
     with torch.no_grad():
         for i, (img_batch, lbl_batch, files, xform) in enumerate(validation_generator):
-
             # load image and mask
             img_batch, lbl_batch = img_batch.to(device), lbl_batch.to(device)
 
@@ -67,14 +66,14 @@ def main(ap):
 
             pred_out = np.argmax(preds, axis = 1)
             
-            all_preds.append(pred_out)
-            all_truth.append(lbl_batch)
+            all_preds.extend(pred_out.flatten())
+            all_truth.extend(lbl_batch.cpu().numpy().flatten().tolist())
             
     # prepare batches for using in metric functions 
-    all_preds = np.concatenate(all_preds)
-    all_preds = all_preds.flatten()
-    all_truth = torch.cat(all_truth).cpu().numpy().flatten()
-    
+    #all_preds = np.concatenate(all_preds)
+    #all_preds = all_preds.flatten()
+    #all_truth = torch.cat(all_truth).cpu().numpy().flatten()
+
     # calc metrics for the batches
     cl = [0,1,2,3,4]
     print('Macro Precision:', precision_score(all_truth, all_preds, average = 'macro', labels = cl))
@@ -101,6 +100,6 @@ def add_arguments():
 
 
 if __name__ == '__main__':
-
+    
     args = add_arguments()
     main(args)

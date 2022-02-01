@@ -267,7 +267,7 @@ class PseudoCreator():
                  remove_shadow = False,
                  aggregate = True):
         """
-        Runs the main processing steps to generate an SEM CAM (SCAM).
+        Runs the main processing steps to generate an CAM/PCM/SEM/eSEM.
         
         Parameters
         ----------

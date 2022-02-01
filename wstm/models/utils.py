@@ -2,9 +2,10 @@ from torch.nn.functional import cosine_similarity
 import torch.nn as nn
 import torch
 
-def norm_batch(batch):
+def norm_batch(batch, debug = False):
     """Normalize all feature maps within a batch.
     """
+    
     batch_shape = batch.size()
 
     # get the min and maxes for each feature map in the batch
@@ -15,6 +16,14 @@ def norm_batch(batch):
     batch_normed = torch.div(batch.view(batch_shape[0:-2] + (-1,))-batch_mins,
                              batch_maxs - batch_mins)
     batch_normed = batch_normed.view(batch_shape)
+    
+    if debug:
+        print("batch_shape", batch_shape)
+        print("batch_mins", batch_mins)
+        print("batch_maxs", batch_maxs)
+        #print("batch_shape", batch_shape)
+        #print("batch_shape", batch_shape)
+        
     
     return batch_normed
 

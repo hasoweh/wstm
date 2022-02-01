@@ -13,7 +13,7 @@ from wstm.utils.camutils import PseudoCreator
 from wstm.models import get_classification_model
 from wstm.utils.dataloader import get_dataloader
 from sklearn.metrics import (f1_score, jaccard_score, precision_score, 
-                             recall_score, confusion_matrix)
+                             recall_score, confusion_matrix, accuracy_score)
 
 
 def main(ap):
@@ -52,7 +52,8 @@ def main(ap):
     sig = nn.Softmax(dim=1)
         
     # create the model
-    model = get_classification_model(ap['model'], classes, config)
+    debug = True if ap['split'] == "test" else False
+    model = get_classification_model(ap['model'], classes, config, debug)
     
     # load model weights and send to device
     device = torch.device(ap['device'])
@@ -76,7 +77,6 @@ def main(ap):
     for i, (img_batch, lbl_batch, files, _) in enumerate(validation_generator):
         # load image and mask
         img_batch, lbl_batch = img_batch.to(device), lbl_batch.to(device)
-
         mask = creator(img_batch, 
                        filename = files, 
                        remove_shadow = ap["shadow"],
@@ -91,8 +91,9 @@ def main(ap):
     print('Macro Recall:', recall_score(all_truth, all_preds, average = 'macro', labels = cl))
     print('Macro F1:', f1_score(all_truth, all_preds, average = 'macro', labels = cl))
     print('Macro mIoU:', jaccard_score(all_truth, all_preds, average = 'macro', labels = cl))
+    print('Overall Accuracy:', accuracy_score(all_truth, all_preds))
 
-    #print(confusion_matrix(all_truth, all_preds, labels = cl))
+    print(confusion_matrix(all_truth, all_preds, labels = cl, normalize = "true"))
     
 def add_arguments():
     ap = argparse.ArgumentParser(prog='Test CLM', description='Tests CLM area predictions')
@@ -124,7 +125,6 @@ def add_arguments():
 
 
 if __name__ == '__main__':
-    
     
     args = add_arguments()
     main(args)
