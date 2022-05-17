@@ -1,4 +1,5 @@
 from sklearn.metrics import jaccard_score, f1_score
+from ..utils.image_utils import upsample
 from .basetrainer import ModelTrainer
 from ..utils.inputAssertions import *
 from rasterio.crs import CRS
@@ -7,6 +8,7 @@ import torch.nn as nn
 import numpy as np
 import rasterio
 import torch
+import cv2
 import os
 
 default = CRS.from_wkt('PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown_based_on_GRS80_ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101004,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",9],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]')
@@ -100,8 +102,6 @@ class PixelwiseTrainer(ModelTrainer):
         lbls.extend(list(np.unique(self.epoch_preds_val)))
         ## remove 255 lbl
         lbls = np.unique([i for i in lbls if i != 255])
-        
-        print(len(self.epoch_labels_val))
         
         miou = jaccard_score(self.epoch_labels_val, 
                              self.epoch_preds_val, 
@@ -208,4 +208,126 @@ class PixelwiseTrainer(ModelTrainer):
             self.current_epoch = int(i+1)
         
         return self.model
+    
+    
+class DSRGTrainer(PixelwiseTrainer):
+    
+    def save_weights(self):
+        if self.loss_tracker[-1] == np.min(np.array(self.loss_tracker)):
+            print('Saving weights')
+            torch.save(self.model.state_dict(), 
+                       self.w_path + '/%s.pt' % self.file_name)
+    
+    def store_val_output(self):
+        pass
+    
+    def run(self):
+        for i in range(self.epochs):
+            self.init_epoch(i)
+        
+            # switch between training and testing 
+            for phase in ['training', 'testing']:
+                self.phase = phase
+                self.model_mode()
+
+                if self.phase == 'testing':
+                    self.store_metrics()
+                    if self.sched_name == 'ReduceLROnPlateau':
+                        self.scheduler.step(self.loss_tracker[-1])
+            # if lowest val loss so far then we save the weights
+            self.save_weights()
+            
+            self.current_epoch = int(i+1)
+        
+        return self.model
+    
+    def get_loaded(self, loaded):
+        img_batch = loaded[0] # imgs
+        lbl_batch = loaded[1] # cams
+        self.img_lvl_lbls = loaded[2]
+        self.orig_img = loaded[3]
+        self.batch_xform = loaded[4]
+        img_batch = img_batch.to(self.device)
+        
+        return img_batch, torch.squeeze(lbl_batch)
+    
+    def getLoss(self):
+        softm = nn.Softmax()(self.out)
+        
+        return self.criterion(softm,
+                              self.out, 
+                              self.lbl_batch,
+                              self.orig_img,
+                              self.img_lvl_lbls
+                              )
+    
+    def store_metrics(self):
+        pass
+
+class DSRGTrainerOnline(PixelwiseTrainer):
+    """Online version generates CAMs on the fly (rather than having them saved 
+    to file and then loading them)"""
+    def __init__(self, 
+                 num_epochs,
+                 loaders, 
+                 model, 
+                 device, 
+                 criterion, 
+                 optimizer, 
+                 weights_f_name, 
+                 cnn_for_cams,
+                 scheduler = None,
+                 weights_path = './weaksuper/weights',
+                 minimum_lr = 0,
+                 crs = default
+                ):
+        
+        super().__init__(num_epochs,
+                         loaders, 
+                         model, 
+                         device, 
+                         criterion, 
+                         optimizer, 
+                         weights_f_name, 
+                         scheduler = scheduler,
+                         weights_path = weights_path,
+                         minimum_lr = minimum_lr,
+                         crs = crs)
+        
+        self.cnn_for_cams = cnn_for_cams
+    
+    def upsample(self, lbl_batch, batch_size, img_dims):
+        n_cams = lbl_batch.shape[1]
+        out = np.zeros((batch_size, n_cams, img_dims, img_dims))
+        for b in range(batch_size):
+            out[b] = upsample(lbl_batch[b],
+                              shape = (n_cams, img_dims, img_dims), 
+                              interpolation = cv2.INTER_CUBIC, 
+                              dtype = np.float32)
+        return out
+    
+    def get_loaded(self, loaded):
+        img_batch = loaded[0].to(self.device) # imgs that have been pre-processed
+        self.img_lvl_lbls = loaded[1].to(self.device)
+        self.orig_img = loaded[2]
+        self.batch_xform = loaded[3]
+        
+        lbl_batch = self.cnn_for_cams(img_batch.float())[0] # online version needs to generate CAMs on the fly
+        # upsample cams
+        lbl_batch = self.upsample(lbl_batch.cpu().detach().numpy(), 
+                                  img_batch.shape[0], 
+                                  img_batch.shape[-1])
+        lbl_batch = torch.tensor(lbl_batch).to(self.device)
+        return img_batch, torch.squeeze(lbl_batch)
+    
+    def getLoss(self):
+        
+        softm = nn.Softmax(dim = 1)(self.out)
+        return self.criterion(softm,
+                              self.out, 
+                              self.lbl_batch,
+                              self.orig_img,
+                              self.img_lvl_lbls
+                              )
+    
     

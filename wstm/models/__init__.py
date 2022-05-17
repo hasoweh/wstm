@@ -1,11 +1,13 @@
 from .pcm import DeepLabModel, PCMBackDeepLab
 from pydoc import locate
 from .sem_cams import *
+from .MSGSRNet import *
 
 
 def get_classification_model(modelname, classes, config, debug = False):
     model_dict = {'Pcm_deeplab': create_pcm_deeplab,
-                  'Sem_deeplab': create_sem_deeplab
+                  'Sem_deeplab': create_sem_deeplab,
+                  'MSGSRNET': create_msgsr
                  }
     model_builder = model_dict[modelname]
     
@@ -44,3 +46,9 @@ def create_sem_deeplab(classes, config, debug):
                                p_dropout = config['prob_drop'])
     
     return SEM_DeepLab(backbone, len(classes), eval_ = debug)
+
+def create_msgsr(classes, config, debug):
+    return MSGSRNet(load_pytorch_model(config),
+                    len(classes),
+                    len(config['means'])
+                   )

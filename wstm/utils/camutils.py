@@ -18,7 +18,7 @@ from .image_utils import load_image, threshold_shadows, get_img_meta
 # default coordinate reference system for the dataset
 crs = CRS.from_wkt('PROJCS["unknown",GEOGCS["unknown",DATUM["Unknown_based_on_GRS80_ellipsoid",SPHEROID["GRS 1980",6378137,298.257222101004,AUTHORITY["EPSG","7019"]]],PRIMEM["Greenwich",0],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]]],PROJECTION["Transverse_Mercator"],PARAMETER["latitude_of_origin",0],PARAMETER["central_meridian",9],PARAMETER["scale_factor",0.9996],PARAMETER["false_easting",500000],PARAMETER["false_northing",0],UNIT["metre",1,AUTHORITY["EPSG","9001"]],AXIS["Easting",EAST],AXIS["Northing",NORTH]]')
     
-    
+
 def save(mask_batch, filenames, batch_xform, outd, crs, 
          dtype = np.uint8, shape = (304, 304)):
     '''Takes a batch of arrays and saves them to file.
@@ -52,8 +52,8 @@ def save(mask_batch, filenames, batch_xform, outd, crs,
         fn = Path(filenames[b]).stem
         
         # get img metadata
-        meta = get_img_meta(crs, shape, dtype, batch_xform[b])  
-            
+        meta = get_img_meta(crs, shape, dtype, batch_xform[b].squeeze())  
+        
         outpath = os.path.join(outd, fn + '.tif')
         out_arr = mask_batch[b, :, :].astype(dtype)
         with rasterio.open(outpath, 'w', **meta) as dest:
@@ -238,7 +238,7 @@ class PseudoCreator():
         # if p == cleared then leave shadows
         class_cams = [self.prepare_cam(current_cams[p],
                                        idx,
-                                       current_features, 
+                                       current_features.squeeze(), 
                                        remove_shadow if p != 4 else False,
                                        current_file,
                                        p) 
@@ -335,4 +335,3 @@ class PseudoCreator():
 
             save(mask_batch, name_, xform, out_dir, crs, 
                  dtype = np.uint8, shape = (self.height, self.width))
-                    

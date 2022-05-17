@@ -27,7 +27,7 @@ class DeepLabForward(SegmentationModel):
 class DeeplabDecoder(nn.Module):
     """Patch of the normal decoder so that it only upsamples by a
     rate of 2. This is to keep the feature maps from being too
-    large when using the correlation module for the CAMs.
+    large when using the pixel correlation module for the CAMs.
     """
     
     def __init__(
@@ -141,6 +141,15 @@ class SEM_DeepLab(nn.Module):
         self.esem = esem
         self.cam_attention = nn.Conv2d(infeat, n_class, 1)
         self.n_classes = n_class
+        self._calc_esem = True
+        
+    @property
+    def calc_esem(self):
+        return self._calc_esem
+    
+    @calc_esem.setter
+    def calc_esem(self, boolean):
+        self._calc_esem = boolean
         
     def forward(self, x):
         
@@ -151,7 +160,7 @@ class SEM_DeepLab(nn.Module):
         cam = self.cam_attention(f)
         
         # use sem on CAM only for inference
-        if self.eval_:
+        if self.eval_ and self.calc_esem:
             cam_p = self.esem(cam, f, self.n_classes)
         
         # get final logits from the cam
@@ -159,8 +168,12 @@ class SEM_DeepLab(nn.Module):
         logits = logits.squeeze()
         
         if self.eval_:
-            # return orig cam, logits, and improved cam
-            return norm_batch(cam), logits, cam_p, f
+            if self.calc_esem:
+                # return orig cam, logits, improved cam (esem), and features
+                return norm_batch(cam), logits, cam_p, f
+            else:
+                # return orig cam, logits, empty tensor, and features
+                return norm_batch(cam), logits, torch.zeros_like(cam), f
 
         else:
             # return preds

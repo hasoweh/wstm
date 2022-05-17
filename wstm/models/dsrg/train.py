@@ -1,16 +1,14 @@
 import json
 import torch
-import warnings
-import rasterio
 import argparse
 import numpy as np
-from wstm.monitoring.metrics import *
+import torchvision
+from .dsgr_layer import DSRGLayer
 from wstm.utils.augmenter import Augmenter
 from wstm.utils.dataloader import get_dataloader
-from wstm.models import get_classification_model
-from wstm.trainers.basetrainer import ModelTrainer
 from wstm.utils.trainUtils import get_class_weights
-from wstm.monitoring.losses import AreaAwareLoss, MultiBCE
+from segmentation_models_pytorch import DeepLabV3Plus
+from wstm.trainers.pixelwise_trainer import PixelwiseTrainer
 
 def main(ap):
 
@@ -20,27 +18,21 @@ def main(ap):
     
     # define GPU or CPU device
     device = torch.device(ap['device'])
-
+    
     # get class names
     classes = config['classes']
     
     # define augmentations
     augs = {'hflip': {'prob': 0.5},
-            'vflip': {'prob': 0.5},
-            'rotate': {'degrees': [90, 90],
-                       'prob': 0.5}
+        'vflip': {'prob': 0.5},
+        'rotate': {'degrees': [25, 335],
+                   'prob': 0.5}
     }
     augs = Augmenter(augs)
-
-    # load area based loss function weights
-    if 'area_weights' in config and config['area_weights']:
-        with open(config['area_weights']) as file:
-            area_weights = json.load(file)
-    else: area_weights = None
-
+    
     # load class imbalance information
-    if 'class_imbal_weights' in config:
-        class_weights = get_class_weights(config).to(device)
+    if 'class_imbal_weights' in config and config['class_imbal_weights']:
+        class_weights = get_class_weights(config)
     else: class_weights = None
     
     # dataloader parameters
@@ -50,41 +42,34 @@ def main(ap):
               'drop_last': config['drop_last']}
 
     # define the base arguments used by all dataloaders
-    base_args = {'classes': classes,
-                 'band_means': tuple(config['means']),
+    base_args = {'band_means': tuple(config['means']),
                  'band_stds': tuple(config['stds']),
-                 'per_image_area_weights' : area_weights,
-                 'return_name' : False,
                  'target_class' : None,
                  'augmenter' : augs}
     
     # get dataloaders
     training = get_dataloader(config, 'train', base_args)
-    validation = get_dataloader(config, 'val', base_args) 
-    
-    # create generators
+    validation = get_dataloader(config, 'val', base_args)
+
     training_generator = torch.utils.data.DataLoader(training, **params)
     validation_generator = torch.utils.data.DataLoader(validation, **params)
-    
+
     generators = {'training': training_generator,
-                  'validation': validation_generator
+                  'testing': validation_generator
                   }
     
     # loss function
-    if config['loss'] == 'abce':
-        criterion = AreaAwareLoss()
-    elif config['loss'] == 'multibce':
-        criterion = MultiBCE()
+    criterion = DSRG_Loss(ignore_label)
     
-    # select model
-    model = get_classification_model(ap['model'], classes, config)
+    # create model
+    model = DeepLabV3Plus(encoder_name= config['model'], encoder_weights = None, 
+                          in_channels = len(config['means']), classes = len(classes))
     model.to(device)
-    print('Using:', device)
-    # pass all params to optim
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config['lr'], betas=(0.9, 0.999), eps=1e-08, 
-                              weight_decay=config['decay'], amsgrad=False)
+    print('Using device:', device)
     
-    # define LR scheduler
+    # define optimizer and scheduler
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config['lr'], betas=(0.9, 0.999), eps=1e-08, 
+                                  weight_decay=config['decay'], amsgrad=False)
     if config['scheduler']:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', 
                                                                factor=config['lr_decay'], 
@@ -93,40 +78,36 @@ def main(ap):
                                                                min_lr=0, eps=1e-08, verbose=False)
     else:
         scheduler = None
-
+    
     # train the model
-    t = ModelTrainer(config['epochs'], 
-                     classes, 
-                     model, 
-                     device, 
-                     generators, 
-                     criterion, 
-                     optimizer, 
-                     ap['save_name'], 
-                     scheduler, 
-                     class_weights, 
-                     config['weights_path'] 
-                     )
+    t = DSRGTrainer(config['epochs'], 
+                    generators, 
+                    model, 
+                    device, 
+                    criterion.to(device), 
+                    optimizer, 
+                    ap['save_name'], 
+                    scheduler, 
+                    config['weights_path']
+                    )
     model = t.run()
     
 def add_arguments():
-    ap = argparse.ArgumentParser(prog='Image Classification Trainer', description='Classification Trainer')
+    ap = argparse.ArgumentParser(prog='Semantic segmentation Trainer', description='Semantic segmentation Trainer')
+    ap.add_argument('-i', '--ignore', type=int, default=255,
+                   help='Pixel value in masks to ignore when determining the loss.')
     ap.add_argument('-c', '--config', type=str, required = True,
             help='Give the path to the training config file.')
-    ap.add_argument('-m', '--model', default='Resnet',
-            help='Name of the model to use for training.')
     ap.add_argument('-s', '--save_name',  type=str, required = True,
             help='Name of the output weights file.')
     ap.add_argument('-v', '--device',  type=str, required = True,
             help='Name of the desired device for training (e.g. cpu or cuda:1)')
-    
+
     args = vars(ap.parse_args())
     return args
 
 
 if __name__ == '__main__':
     
-    warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
-
     args = add_arguments()
     main(args)

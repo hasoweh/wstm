@@ -15,6 +15,7 @@ import rasterio
 import cv2 as cv
 import numpy as np
 import torch.nn as nn
+from .camutils import *
 from pathlib import Path
 from numpy import genfromtxt
 from .inputAssertions import *
@@ -22,7 +23,6 @@ from .image_utils import upsample
 from .augmenter import Augmenter
 import torchvision.transforms as T
 from torch.utils.data import Dataset
-from .camutils import *
 from torchvision.transforms.functional import to_pil_image
 
 def filter_target_files(targets, full_list):
@@ -89,6 +89,21 @@ def load_image_and_label(img_path, labels, classes):
     one_hot = convert_one_hot(classes, label)
     
     return img.astype(np.uint8), one_hot, meta
+
+def get_img_paths(json_path, img_folder, target_class, phase, img_type = "tif"): # need to make img type flag for using npy files
+    # load image target labels from json file
+    with open(json_path) as file:
+        print('Opening', json_path)
+        labels = json.load(file)
+
+    # get all full image paths
+    pattern = os.path.join(img_folder, '%s.%s')
+    file_paths = [pattern % (Path(img).stem, img_type) for img in labels[phase]]
+    if target_class is not None:
+        file_paths = filter_target_files(target_class, 
+                                         file_paths
+                                         )
+    return file_paths, labels
 
 class ForestDataset(Dataset):
     """Forest dataset class.
@@ -165,19 +180,11 @@ class ForestDataset(Dataset):
         if per_image_area_weights is not None:
             assert_dict(per_image_area_weights, 'per_image_area_weights')
         self.weights = per_image_area_weights
-        
-        # load image target labels from json file
-        with open(json_file) as file:
-            print('Opening', json_file)
-            self.labels = json.load(file)
-        
-        # get all full image paths
-        pattern = os.path.join(img_folder, '%s')
-        self.rasterData = [pattern % img for img in self.labels[phase]]
-        if target_class is not None:
-            self.rasterData = filter_target_files(target_class, 
-                                                  self.rasterData
-                                                  )
+
+        self.rasterData, self.labels = get_img_paths(json_file, 
+                                                     img_folder, 
+                                                     target_class,
+                                                     phase)
         
 
     def __len__(self):
@@ -222,6 +229,8 @@ class CamDataset(Dataset):
     """
 
     def __init__(self, 
+                 json_file,
+                 phase,
                  img_folder, 
                  mask_folder,
                  band_means, 
@@ -233,37 +242,26 @@ class CamDataset(Dataset):
                  img_type = 'tif',
                  mask_type = 'tif'):
         
-        def get_data_paths(folder_im, 
-                           folder_msk, 
-                           file_type, 
-                           target_class):
-            # get list of all image files
-            paths = glob.glob(folder_msk + '/*.%s' % file_type)
-            if target_class is not None:
-                paths = filter_target_files(target_class, 
-                                            paths)
-            # assert we found files
-            if len(paths) == 0:
-                patt = folder_msk + '/*.%s' % file_type
-                m = "No files found using  pattern: %s" % patt
-                raise AssertionError(m)
-                
-            # make a dictionary of {img: mask}
-            patt = os.path.join(folder_im, '%s')
-            path_dict = {p: patt % Path(p).name for p in paths}
-                
-            return paths, path_dict
+        mask_paths = get_img_paths(json_file, mask_folder, target_class, phase, mask_type)[0]
+        if target_class is not None:
+            mask_paths = filter_target_files(target_class, 
+                                        mask_paths)
+            
+        # assert we found files
+        if len(mask_paths) == 0:
+            patt = mask_folder + '/*.%s' % mask_type
+            m = "No files found using  pattern: %s" % patt
+            raise AssertionError(m)
+        self.rasterData = mask_paths
         
+        # make a dictionary of {img: mask}
+        patt = os.path.join(img_folder, '%s.%s')
+        self.files_dict = {p: patt % (Path(p).stem, img_type) for p in mask_paths}
+
         self.img_folder = img_folder
         self.img_type = img_type
         self.upsample = upsample
         self.augmenter = augmenter
-        
-        # get all matching file paths
-        self.rasterData, self.files_dict = get_data_paths(img_folder, 
-                                                          mask_folder, 
-                                                          mask_type, 
-                                                          target_class)
         
         # initialize the base transformations that should always be applied
         self.img_preprocessing = [T.ToTensor(),
@@ -272,11 +270,7 @@ class CamDataset(Dataset):
     def __len__(self):
         return len(self.rasterData) 
         
-    def load_mask_img(self, mask_path):
-        
-        # get mask image path
-        img_path = self.files_dict[mask_path]
-        
+    def load_mask_and_img(self, mask_path, img_path):
         # load files
         with rasterio.open(img_path) as f:
             img_arr = f.read()
@@ -285,20 +279,21 @@ class CamDataset(Dataset):
             mask_arr = f.read()
         mask_arr = np.squeeze(mask_arr)
         
-        # upsample img and mask
+        return img_arr, torch.tensor(mask_arr), meta
+    
+    def upsample(self, img_arr, mask_arr):
+        
         img_arr = upsample(img_arr,
-                            shape = (4, 304, 304), 
-                            interpolation = cv.INTER_CUBIC, 
-                            dtype = np.uint8)
+                           shape = (4, 304, 304), 
+                           interpolation = cv.INTER_CUBIC, 
+                           dtype = np.uint8)
 
         mask_arr = upsample(mask_arr,
                             shape = (304, 304), 
                             interpolation = cv.INTER_NEAREST, 
                             dtype = np.uint8)
-        
-        return img_arr, torch.tensor(mask_arr), meta, img_path
+        return img_arr, mask_arr
 
-        
     def __getitem__(self, idx):
         # ensure the idx is in a list
         if torch.is_tensor(idx):
@@ -306,7 +301,12 @@ class CamDataset(Dataset):
         
         # get full file path
         mask_path = self.rasterData[idx]
-        image, mask, meta, img_path = self.load_mask_img(mask_path)
+        img_path = self.files_dict[mask_path]
+        
+        # load data
+        image, mask, meta = self.load_mask_and_img(mask_path, img_path)
+        if self.upsample:
+            img_arr, mask_arr = upsample(img_arr, mask_arr)
 
         # set up transformations
         pre_process = T.Compose(self.img_preprocessing)
@@ -321,12 +321,160 @@ class CamDataset(Dataset):
 
         return image, mask, img_path, np.array(meta['transform'])
     
+class DSRGDataset(CamDataset):
     
+    def __init__(self, 
+                 json_file,
+                 phase,
+                 img_folder, 
+                 mask_folder,
+                 band_means, 
+                 band_stds, 
+                 augmentations = None,
+                 target_class = None,
+                 upsample = False,
+                 augmenter = None,
+                 img_type = 'tif',
+                 mask_type = 'npy',
+                 classes = []):
+        
+        super().__init__(json_file,
+                         phase,
+                         img_folder, 
+                         mask_folder,
+                         band_means, 
+                         band_stds, 
+                         augmentations = augmentations,
+                         target_class = target_class,
+                         upsample = upsample,
+                         augmenter = augmenter,
+                         img_type = img_type,
+                         mask_type = mask_type)
+        
+        
+        # load image target labels from json file
+        with open(json_file) as file:
+            self.img_lvl_labels = json.load(file)[phase]
+        self.classes = classes
+        
+    def load_mask_and_img(self, mask_path, img_path):
+        
+        # load files
+        with rasterio.open(img_path) as f:
+            img_arr = f.read()
+            meta = f.meta.copy()
+        mask_arr = np.load(mask_path)
+        
+        return img_arr, torch.tensor(mask_arr), meta
+
+        
+    def __getitem__(self, idx):
+        # ensure the idx is in a list
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+            
+        # get full file path
+        mask_path = self.rasterData[idx]
+        img_path = self.files_dict[mask_path]
+        
+        # load image, img meta, and masks
+        image_orig, mask, meta = self.load_mask_and_img(mask_path, img_path)
+        
+        # get image level labels
+        img_lvl_label = self.img_lvl_labels[Path(img_path).name]
+        img_lvl_label = convert_one_hot(self.classes, img_lvl_label)
+        
+        # set up transformations
+        pre_process = T.Compose(self.img_preprocessing)
+        
+        # change the order of the bands, as ToTensor will flip them
+        image = image_orig.transpose(1, 2, 0)
+        # for DSRG, need 1 image preprocessed (for the network) and 1 unchanged (for CRF)
+        image = pre_process(image)
+        
+        # apply extra augmentations
+        if self.augmenter is not None:
+            image, mask = self.augmenter([image, mask])
+            
+        # need to downsample the original image for parts of DSRG
+        image_orig = upsample(image_orig, (image_orig.shape[0],
+                                           mask.shape[-1],
+                                           mask.shape[-1])
+                             )
+
+        return image, mask, img_lvl_label, image_orig, np.array(meta['transform'])
+        
+        
+class DSRG_OnlineDataset(ForestDataset):
+    """Doesn't try to load CAM masks because these will be generated live.
+    Will need more time to process because need to pass an image first through
+    the 1st stage CNN, but will remove the need for more hard drive space.
+    """
+    
+    def __init__(self, 
+                 phase,
+                 img_folder, 
+                 json_file,
+                 classes, 
+                 band_means, 
+                 band_stds, 
+                 per_image_area_weights = None,
+                 return_name = False,
+                 aggregate = False,
+                 target_class = None,
+                 augmenter = None):
+        
+        super().__init__(phase,
+                         img_folder, 
+                         json_file,
+                         classes, 
+                         band_means, 
+                         band_stds, 
+                         per_image_area_weights = per_image_area_weights,
+                         return_name = return_name,
+                         aggregate = aggregate,
+                         target_class = target_class,
+                         augmenter = augmenter)
+        
+    def __getitem__(self, idx):
+        # ensure the idx is in a list
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        
+        # get full file path
+        img_name = self.rasterData[idx]
+        image_orig, img_lvl_label, meta = load_image_and_label(img_name, 
+                                                              self.labels[self.phase],
+                                                              self.classes)
+        
+        transform = T.Compose(self.transforms)
+        
+        # change the order of the bands, as ToTensor will flip them
+        image = image_orig.transpose(1, 2, 0)
+        image = transform(image)
+        
+        # apply extra augmentations
+        if self.augmenter is not None:
+            image = self.augmenter([image])[0]
+        
+        # determine outputs
+        if self.weights is None:
+            weight = torch.ones(len(self.classes))
+        else:
+            # return with area weights
+            weight = torch.tensor(self.weights[Path(img_name).name])
+            
+
+        return image, img_lvl_label, image_orig, np.array(meta["transform"])
+        
+        
 def get_dataloader(config, phase, base_args):
 
     # select the function to create the desired dataloader
     loader_dict = {'ForestDataset': create_forest,
-                   'CamDataset': create_cam
+                   'CamDataset': create_cam,
+                   "DSRGDataset": create_dsrg,
+                   "DSRG_OnlineDataset": create_dsrg_online
                   }
     loader = config['loader']
     
@@ -345,14 +493,43 @@ def create_forest(config, phase, base_args):
 
 def create_cam(config, phase, base_args):
     
+    base_args['phase'] = phase
+    base_args['json_file'] = config['json_file']
     base_args['img_folder'] = config['img_folder']
-    if phase == 'train':
-        base_args['mask_folder'] = config['cam_folder']
-    elif phase == 'val':
-        base_args['mask_folder'] = config['valcam_folder']
-    elif phase == 'test':
+    if phase == "train" or phase == "val":
+        base_args['mask_folder'] = config['cam_folder'] # should be psuedolabels in the folder
+    elif phase == "test":
         base_args['mask_folder'] = config['test_folder']
     base_args['img_type'] = config['img_type']
     base_args['mask_type'] = config['mask_type']
     
     return CamDataset(**base_args)
+
+def create_dsrg(config, phase, base_args):
+    
+    base_args['phase'] = phase
+    base_args['json_file'] = config['json_file']
+    base_args['img_folder'] = config['img_folder']
+    if phase == "train" or phase == "val":
+        base_args['mask_folder'] = config['cam_folder'] # should be raw cams in the folder
+        base_args['mask_type'] = config['mask_type']
+        base_args['classes'] = config['classes']
+    elif phase == "test":
+        base_args['mask_folder'] = config['test_folder']
+        base_args['mask_type'] = config['img_type']
+    base_args['img_type'] = config['img_type']
+    
+    if phase == "train" or phase == "val":
+        return DSRGDataset(**base_args)
+    elif phase == "test":
+        return CamDataset(**base_args)
+
+
+def create_dsrg_online(config, phase, base_args):
+    base_args['phase'] = phase
+    base_args['json_file'] = config['json_file']
+    base_args['img_folder'] = config['img_folder']
+    base_args['classes'] = config["classes"]
+    
+    return DSRG_OnlineDataset(**base_args)
+

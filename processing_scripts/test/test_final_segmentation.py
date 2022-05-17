@@ -23,7 +23,7 @@ def main(ap):
 
     classes = config['classes']
 
-    # dataloader parameters   
+    # dataloader parameters
     params = {'batch_size': ap['batch_size'],
               'shuffle': True,
               'num_workers': 1,
@@ -32,7 +32,7 @@ def main(ap):
     # define the base arguments used by all dataloaders
     base_args = {'band_means': tuple(config['means']),
                  'band_stds': tuple(config['stds']),
-                 'target_class' : None
+                 'target_class' : targets
                 }
     
     # get dataloaders
@@ -68,11 +68,7 @@ def main(ap):
             
             all_preds.extend(pred_out.flatten())
             all_truth.extend(lbl_batch.cpu().numpy().flatten().tolist())
-            
-    # prepare batches for using in metric functions 
-    #all_preds = np.concatenate(all_preds)
-    #all_preds = all_preds.flatten()
-    #all_truth = torch.cat(all_truth).cpu().numpy().flatten()
+
 
     # calc metrics for the batches
     cl = [0,1,2,3,4]
@@ -100,6 +96,58 @@ def add_arguments():
 
 
 if __name__ == '__main__':
+    
+    targets = [
+        "Cleared_0_1006_WEFL_NLF",
+        "Cleared_0_1034_WEFL_NLF",
+        "Cleared_0_1082_WEFL_NLF",
+        "Cleared_0_112_WEFL_NLF",
+        "Cleared_0_170_WEFL_NLF",
+        "Cleared_0_1296_WEFL_NLF", 
+        "Cleared_0_1339_WEFL_NLF",
+        "Cleared_0_1663_WEFL_NLF",
+        "Cleared_0_1785_WEFL_NLF",
+        "Fagus_sylvatica_9_6388_WEFL_NLF",
+        "Fagus_sylvatica_9_7201_WEFL_NLF", 
+        "Fagus_sylvatica_7_6792_WEFL_NLF", 
+        "Fagus_sylvatica_8_5500_WEFL_NLF",
+        "Fagus_sylvatica_7_5549_WEFL_NLF",
+        "Fagus_sylvatica_3_5311_WEFL_NLF", 
+        "Fagus_sylvatica_3_8037_WEFL_NLF",
+        "Fagus_sylvatica_3_8976_WEFL_NLF", 
+        "Fagus_sylvatica_4_9918_WEFL_NLF",
+        "Picea_abies_2_14926_WEFL_NLF",
+        "Picea_abies_3_10077_WEFL_NLF",
+        "Picea_abies_3_12659_WEFL_NLF",
+        "Picea_abies_3_10161_WEFL_NLF",
+        "Picea_abies_3_10270_WEFL_NLF",
+        "Picea_abies_3_10476_WEFL_NLF",
+        "Picea_abies_3_10742_WEFL_NLF",
+        "Picea_abies_2_12498_WEFL_NLF",
+        "Picea_abies_3_10915_WEFL_NLF",
+        "Pinus_sylvestris_2_17451_WEFL_NLF",
+        "Pinus_sylvestris_2_18499_WEFL_NLF",
+        "Pinus_sylvestris_3_15213_WEFL_NLF",
+        "Pinus_sylvestris_3_16716_WEFL_NLF", 
+        "Pinus_sylvestris_3_17383_WEFL_NLF",
+        "Pinus_sylvestris_3_17956_WEFL_NLF",
+        "Pinus_sylvestris_3_18171_WEFL_NLF",
+        "Pinus_sylvestris_3_19102_WEFL_NLF",
+        "Pinus_sylvestris_4_18747_WEFL_NLF",
+        "Pinus_sylvestris_4_18775_WEFL_NLF",
+        "Quercus_petraea_8_22319_WEFL_NLF",
+        "Quercus_petraea_9_22282_WEFL_NLF",
+        "Quercus_robur_7_29902_WEFL_NLF",
+        "Quercus_robur_8_27749_WEFL_NLF",
+        "Quercus_robur_8_29916_WEFL_NLF",
+        "Quercus_robur_9_26479_WEFL_NLF",
+        "Quercus_robur_9_27951_WEFL_NLF",
+        "Quercus_rubra_2_32622_WEFL_NLF",
+        "Quercus_rubra_3_30218_WEFL_NLF",
+        "Quercus_rubra_3_34305_WEFL_NLF",
+        "Quercus_rubra_4_33400_WEFL_NLF"
+    
+    ]
     
     args = add_arguments()
     main(args)

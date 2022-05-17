@@ -74,3 +74,31 @@ class AreaAwareMulti():
         L = loss / n_losses
         
         return L
+
+class MultiBCE():
+    """Calculates BCE loss for multiple inputs.
+    """
+    
+    def __init__(self, loss_term_weights = [1, 1, 1, 1]):
+        self.loss_term_weights = loss_term_weights
+        
+    def __call__(
+        self,
+        preds,
+        targets,
+        area_weights,
+        multi_class_weights = None,
+        reduction = 'mean'
+        ):
+        # init loss value
+        loss = 0
+        
+        self.bce = nn.BCEWithLogitsLoss(reduction = 'mean',
+                                        weight = multi_class_weights)
+        
+
+        for w, pred in zip(self.loss_term_weights, preds):
+            l = w * self.bce(pred, targets)
+            loss += l
+        
+        return loss

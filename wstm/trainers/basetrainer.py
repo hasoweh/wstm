@@ -105,7 +105,8 @@ class ModelTrainer():
         self.macro_prec_tracker = []
         self.macro_map_tracker = []
         self.micro_map_tracker = []
-
+        self.loss_tracker = []
+        
     @property
     def current_lr(self):
         return self.optimizer.param_groups[0]['lr']
@@ -177,7 +178,7 @@ class ModelTrainer():
             print('Current LR: %.4f' % self.current_lr)
 
         # loop through all batches to perform an epoch
-        for loaded in self.loaders[self.phase]:
+        for i, loaded in enumerate(self.loaders[self.phase]):
             epoch_loss = self.train_step(loaded, epoch_loss)
         
         mean_loss = np.mean(np.array(epoch_loss))
@@ -185,6 +186,7 @@ class ModelTrainer():
         print('Training loss for epoch %d : ' % int(self.current_epoch + 1), 
               mean_loss)
         print()
+        self.loss_tracker.append(mean_loss)
 
         # track the final logits in the epoch
         self.track_outputs()
@@ -254,7 +256,11 @@ class ModelTrainer():
         self.out = self.model(self.img_batch.float())
         
         if len(self.out) > 1 and isinstance(self.out, list):
-            self.pred_out = np.array(self.sig(self.out[0]).cpu() > 0.5, dtype=float)
+            if type(self.model).__name__ == 'MSGSRNet':
+                # use the logits from the last layer for MSGSR
+                self.pred_out = np.array(self.sig(self.out[-1]).cpu() > 0.5, dtype=float)
+            else:
+                self.pred_out = np.array(self.sig(self.out[0]).cpu() > 0.5, dtype=float)
         else:
             self.pred_out = np.array(self.sig(self.out).cpu() > 0.5, dtype=float)
 
